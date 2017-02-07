@@ -17,7 +17,8 @@ class Packet:
         self.seq_num = seq_num
         self.data = data
         self.enqueue_time = None
-        self.transmit_time = None
+        self.start_transmit_time = None
+        self.end_transmit_time = None
         self.receive_time = None
 
     def __str__(self):
@@ -72,12 +73,14 @@ class Node:
         if len(self.output_queue) > 0:
             self.state = Node.BUSY
             p = self.output_queue.popleft()
+            p.start_transmit_time = sim.now
             tx_delay = self.outgoing_link.compute_transmit_delay(p)
             sim.schedule_event(self.outgoing_link.start_propagation,
                                self.outgoing_link, p, tx_delay,
                                'start-prop[%d]' % p.seq_num)
         else:
             self.state = Node.IDLE
+
 
     def receive(self, sim, owner, data):
         data.receive_time = sim.now
@@ -122,7 +125,7 @@ class Link:
         :return:
         """
         propagation_delay = self.compute_propagation_delay()
-        data.transmit_time = sim.now
+        data.end_transmit_time = sim.now
 
         sim.schedule_event(self.dst.receive, self.dst,
                            data, propagation_delay,
@@ -213,6 +216,6 @@ if __name__ == "__main__":
     print('\n\nSimulation Results:')
     print('enqueue time, tx time, receive time, end-to-end delay, queue delay')
     for packet in received_packets:
-        queue_delay = packet.transmit_time - packet.enqueue_time
+        queue_delay = packet.start_transmit_time - packet.enqueue_time
         e2e_delay = packet.receive_time - packet.enqueue_time
-        print('receive', packet.enqueue_time, packet.transmit_time, packet.receive_time, e2e_delay, queue_delay)
+        print('receive', packet.enqueue_time, packet.end_transmit_time, packet.receive_time, e2e_delay, queue_delay)
