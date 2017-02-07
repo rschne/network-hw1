@@ -8,17 +8,19 @@ from collections import deque
 
 received_packets = []
 
+
 class Packet:
     """
     This stores the information associated with a packet
     """
+    seq_num = 0
     def __init__(self, num_bits, seq_num, data):
         self.num_bits = num_bits
-        self.seq_num = seq_num
+        self.seq_num = Packet.seq_num
+        Packet.seq_num += 1
         self.data = data
         self.enqueue_time = None
-        self.start_transmit_time = None
-        self.end_transmit_time = None
+        self.transmit_time = None
         self.receive_time = None
 
     def __str__(self):
@@ -41,7 +43,7 @@ class Node:
         self.state = Node.IDLE
         self.seq = 0
 
-    def enqueue(self, sim, owner, data):
+    def enqueue(self, sim, owner, p):
         """
         Handles the enqueueing of a packet
         If the queue is empty, then we can start transmitting ASAP
@@ -51,7 +53,6 @@ class Node:
         :param data:
         :return:
         """
-        p = Packet(1000, self.seq, data)
         p.enqueue_time = sim.now
         self.seq += 1
         if self.state == Node.IDLE:
@@ -73,7 +74,6 @@ class Node:
         if len(self.output_queue) > 0:
             self.state = Node.BUSY
             p = self.output_queue.popleft()
-            p.start_transmit_time = sim.now
             tx_delay = self.outgoing_link.compute_transmit_delay(p)
             sim.schedule_event(self.outgoing_link.start_propagation,
                                self.outgoing_link, p, tx_delay,
@@ -81,10 +81,13 @@ class Node:
         else:
             self.state = Node.IDLE
 
-
     def receive(self, sim, owner, data):
         data.receive_time = sim.now
-        received_packets.append(data)
+
+        if owner.name == 'D':
+            received_packets.append(data)
+        else:
+            self.enqueue(sim, self, data)
 
     def __str__(self):
         return '%s' % self.name
@@ -125,13 +128,16 @@ class Link:
         :return:
         """
         propagation_delay = self.compute_propagation_delay()
-        data.end_transmit_time = sim.now
+        data.transmit_time = sim.now
 
         sim.schedule_event(self.dst.receive, self.dst,
                            data, propagation_delay,
                            'receive[%d]' % data.seq_num)
 
         sim.schedule_event(self.src.next_tx, self.src, None, 0, 'next-tx')
+
+    def __str__(self):
+        return '%s-%s' % (self.src, self.dst)
 
 
 class Event:
@@ -181,7 +187,7 @@ class Simulator:
     def connect(self, src, dst, bandwidth, distance):
         link = Link(src, dst, bandwidth, distance)
         src.outgoing_link = link
-        dst.incoming_link = link
+        dst.input_queue = link
         self.links.append(link)
 
     def schedule_event(self, fh, owner, data, delay, tag):
@@ -189,33 +195,56 @@ class Simulator:
         self.queue.append(event)
 
     def run(self, duration):
-        print('%10s %8s %16s %16s' % ('now', 'seq_num', 'data', 'tag'))
+        print('%10s %8s %16s %16s %16s' % ('now', 'seq_num', 'data', 'where', 'tag'))
         while self.now < duration:
             self.queue.sort(key=lambda e: (e.time, e.seq_num))
 
             if len(self.queue) == 0: break
             hoq = self.queue.pop(0)
             self.now = hoq.time
-            print('%10.1f %8d %16s %16s' % (self.now, hoq.seq_num, str(hoq.data), hoq.tag))
+            print('%10.1f %8d %16s %16s %16s' %
+                  (self.now, hoq.seq_num, self.print_none(hoq.data), self.print_none(hoq.owner), hoq.tag))
             hoq.fh(self, hoq.owner, hoq.data)
 
+    def print_none(self, x):
+        if x is None:
+            return '-'
+        else:
+            return str(x)
 
 if __name__ == "__main__":
     """
     Setup a simple topology a --> b
     """
-    node_a = Node('a')
-    node_b = Node('b')
+    node_a = Node('A')
+    node_b = Node('B')
+    node_c = Node('C')
+    node_d = Node('D')
 
     sim = Simulator()
-    sim.connect(node_a, node_b, 100, 2e8)
-    sim.schedule_event(node_a.enqueue, node_a, None, 0, 'enqueue')
-    sim.schedule_event(node_a.enqueue, node_a, None, 0, 'enqueue')
-    sim.run(1000)
+    sim.connect(node_a, node_c, 100, 2e8)
+    sim.connect(node_b, node_c, 100, 2e8)
+    sim.connect(node_c, node_d, 100, 2e8)
+
+    # generate the packets from A
+    seq_num = 0
+    for time in range(0, 10000, 1000):
+        for seq in range(10):
+            pkt = Packet(1000, seq_num, None)
+            sim.schedule_event(node_a.enqueue, node_a, pkt, time, 'queue')
+            seq_num += 1
+
+    # generate the packets from B
+    for time in range(0, 10000, 500):
+        for seq in range(2):
+            pkt = Packet(1000, seq_num, None)
+            sim.schedule_event(node_b.enqueue, node_b, pkt, time, 'queue')
+            seq_num += 1
+    sim.run(100)
 
     print('\n\nSimulation Results:')
     print('enqueue time, tx time, receive time, end-to-end delay, queue delay')
     for packet in received_packets:
-        queue_delay = packet.start_transmit_time - packet.enqueue_time
+        queue_delay = packet.transmit_time - packet.enqueue_time
         e2e_delay = packet.receive_time - packet.enqueue_time
-        print('receive', packet.enqueue_time, packet.end_transmit_time, packet.receive_time, e2e_delay, queue_delay)
+        print('receive', packet.enqueue_time, packet.transmit_time, packet.receive_time, e2e_delay, queue_delay)
