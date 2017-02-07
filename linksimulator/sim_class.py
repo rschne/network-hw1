@@ -181,7 +181,7 @@ class Simulator:
     def connect(self, src, dst, bandwidth, distance):
         link = Link(src, dst, bandwidth, distance)
         src.outgoing_link = link
-        dst.input_queue = link
+        dst.incoming_link = link
         self.links.append(link)
 
     def schedule_event(self, fh, owner, data, delay, tag):
